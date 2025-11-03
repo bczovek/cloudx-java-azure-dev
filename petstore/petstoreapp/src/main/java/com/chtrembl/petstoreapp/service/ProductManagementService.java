@@ -30,9 +30,9 @@ public class ProductManagementService {
     private final ContainerEnvironment containerEnvironment;
     private final ProductServiceClient productServiceClient;
 
-    public Collection<Product> getProductsByCategory(String category, List<Tag> tags) {
+    public Collection<Product> getProductsByCategory(String category, List<Tag> tags) throws Exception {
         List<Product> products;
-
+        
         MDC.put(OPERATION, "getProducts");
         MDC.put(CATEGORY, category);
 
@@ -41,6 +41,9 @@ public class ProductManagementService {
 
         log.info("Starting product retrieval operation [RequestID: {}, TraceID: {}, Category: {}]",
                 requestId, traceId, category);
+        
+        this.sessionUser.getTelemetryClient().trackEvent(String.format("UserID: %s, SessionID: %s", 
+                        this.sessionUser.getName(), this.sessionUser.getSessionId()));
 
         try {
             this.sessionUser.getTelemetryClient().trackEvent(
@@ -65,8 +68,8 @@ public class ProductManagementService {
 
             log.info("Successfully retrieved {} products for category {} with tags {} [RequestID: {}, TraceID: {}]",
                     products.size(), category, tags, requestId, traceId);
-
-            return products;
+            this.sessionUser.getTelemetryClient().trackMetric("Number of items in category", products.size());
+            throw new Exception("Cannot move further");
         } catch (FeignException fe) {
             log.error("Feign error retrieving products [RequestID: {}, TraceID: {}, Category: {}, HTTP: {}, Message: {}]",
                     requestId, traceId, category, fe.status(), fe.getMessage(), fe);

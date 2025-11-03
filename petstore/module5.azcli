@@ -1,0 +1,43 @@
+az login
+
+tempResourceGroup="temporary_rg2"
+tempRg1Location="westeurope"
+
+az group create --name $tempResourceGroup --location "$tempRg1Location"
+
+acrName="petstoreacr9084"
+
+az acr login --name "$acrName"
+
+az appservice plan create --name petstorePlan --resource-group "$tempResourceGroup" --is-linux --location "$tempRg1Location" --sku P1V2
+
+az monitor app-insights component create --app appinsights --location "$tempRg1Location" --resource-group "$tempResourceGroup"
+
+appInsightsConnString="$(az monitor app-insights component show --app appinsights --resource-group "$tempResourceGroup" --query connectionString -o tsv)"
+
+orderServiceName="petstoreorderservice$RANDOM"
+petServiceName="petstorepetservice$RANDOM"
+productServiceName="petstoreproductservice$RANDOM"
+
+az webapp create --name petstoreapp --plan petstorePlan --resource-group "$tempResourceGroup" --deployment-container-image-name "$acrName.azurecr.io/petstoreapp:latest" 
+az webapp config appsettings set --resource-group "$tempResourceGroup" --name petstoreapp --settings APPLICATIONINSIGHTS_CONNECTION_STRING="$appInsightsConnString"
+az webapp config appsettings set --name petstoreapp --resource-group "$tempResourceGroup" --settings PETSTOREPETSERVICE_URL="https://$petServiceName.azurewebsites.net" PETSTOREPRODUCTSERVICE_URL="https://$productServiceName.azurewebsites.net" PETSTOREORDERSERVICE_URL=https://$orderServiceName.azurewebsites.net WEBSITES_PORT=8080
+
+az webapp create --name "$orderServiceName" --plan petstorePlan --resource-group "$tempResourceGroup" --deployment-container-image-name "$acrName.azurecr.io/petstoreorderservice:latest"
+az webapp config appsettings set --resource-group "$tempResourceGroup" --name "$orderServiceName" --settings APPLICATIONINSIGHTS_CONNECTION_STRING="$appInsightsConnString"
+az webapp config appsettings set --name "$orderServiceName" --resource-group "$tempResourceGroup" --settings PETSTOREPRODUCTSERVICE_URL="https://$productServiceName.azurewebsites.net" WEBSITES_PORT=8080
+
+az webapp create --name "$petServiceName" --plan petstorePlan --resource-group "$tempResourceGroup" --deployment-container-image-name "$acrName.azurecr.io/petstorepetservice:latest"
+az webapp config appsettings set --resource-group "$tempResourceGroup" --name "$petServiceName" --settings APPLICATIONINSIGHTS_CONNECTION_STRING="$appInsightsConnString"
+az webapp config appsettings set --name "$petServiceName" --resource-group "$tempResourceGroup" --settings WEBSITES_PORT=8080
+
+az webapp create --name "$productServiceName" --plan petstorePlan --resource-group "$tempResourceGroup" --deployment-container-image-name "$acrName.azurecr.io/petstoreproductservice:latest"
+az webapp config appsettings set --resource-group "$tempResourceGroup" --name "$productServiceName" --settings APPLICATIONINSIGHTS_CONNECTION_STRING="$appInsightsConnString"
+az webapp config appsettings set --name "$productServiceName" --resource-group "$tempResourceGroup" --settings WEBSITES_PORT=8080
+
+az acr build --image petstoreapp:v2 --registry "$acrName" --file petstoreapp/Dockerfile petstoreapp/
+
+az webapp config container set --name petstoreapp --resource-group "$tempResourceGroup" --docker-custom-image-name "$acrName.azurecr.io/petstoreapp:v2"
+
+az acr build --image petstoreapp:v3 --registry "$acrName" --file petstoreapp/Dockerfile petstoreapp/
+az webapp config container set --name petstoreapp --resource-group "$tempResourceGroup" --docker-custom-image-name "$acrName.azurecr.io/petstoreapp:v3"

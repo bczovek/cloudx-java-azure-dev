@@ -1,0 +1,57 @@
+az login
+
+tempResourceGroup="temporary_rg2"
+tempRg1Location="westeurope"
+
+az group create --name $tempResourceGroup --location "$tempRg1Location"
+
+acrName="petstoreacr9084"
+
+az acr login --name "$acrName"
+
+az acr build --image petstoreapp:latest --registry "$acrName" --file petstoreapp/Dockerfile petstoreapp/
+az acr build --image petstoreorderservice:latest --registry "$acrName" --file petstoreorderservice/Dockerfile petstoreorderservice/
+az acr build --image petstorepetservice:latest --registry "$acrName" --file petstorepetservice/Dockerfile petstorepetservice/
+az acr build --image petstoreproductservice:latest --registry "$acrName" --file petstoreproductservice/Dockerfile petstoreproductservice/
+
+containerenvName="petstore-container-env-$RANDOM"
+
+az containerapp env create --name "$containerenvName" --resource-group "$tempResourceGroup" --location westeurope
+
+az containerapp create --name petstoreapp --resource-group "$tempResourceGroup" --environment "$containerenvName" --image "$acrName.azurecr.io/petstoreapp:latest"  --target-port 8080 --ingress external --registry-server "$acrName".azurecr.io --query properties.configuration.ingress.fqdn
+
+az containerapp create --name petstoreorderservice --resource-group "$tempResourceGroup" --environment "$containerenvName" --image "$acrName.azurecr.io/petstoreorderservice:latest"  --target-port 8080 --ingress external --registry-server "$acrName".azurecr.io --query properties.configuration.ingress.fqdn
+az containerapp create --name petstorepetservice --resource-group "$tempResourceGroup" --environment "$containerenvName" --image "$acrName.azurecr.io/petstorepetservice:latest"  --target-port 8080 --ingress external --registry-server "$acrName".azurecr.io --query properties.configuration.ingress.fqdn
+az containerapp create --name petstoreproductservice --resource-group "$tempResourceGroup" --environment "$containerenvName" --image "$acrName.azurecr.io/petstoreproductservice:latest"  --target-port 8080 --ingress external --registry-server "$acrName".azurecr.io --query properties.configuration.ingress.fqdn
+
+petstoreorderserviceFqdn=$(az containerapp show --name petstoreorderservice --resource-group "$tempResourceGroup" --query properties.configuration.ingress.fqdn --output tsv)
+petstorepetserviceFqdn=$(az containerapp show --name petstorepetservice --resource-group "$tempResourceGroup" --query properties.configuration.ingress.fqdn --output tsv)
+petstoreproductserviceFqdn=$(az containerapp show --name petstoreproductservice --resource-group "$tempResourceGroup" --query properties.configuration.ingress.fqdn --output tsv)
+
+az containerapp update --name petstoreapp --resource-group "$tempResourceGroup" --set-env-vars "PETSTOREPETSERVICE_URL=https://$petstorepetserviceFqdn" "PETSTOREPRODUCTSERVICE_URL=https://$petstoreproductserviceFqdn" "PETSTOREORDERSERVICE_URL=https://$petstoreorderserviceFqdn" "WEBSITES_PORT=8080"
+
+az containerapp update --name petstoreorderservice --resource-group "$tempResourceGroup" --set-env-vars "PETSTOREPRODUCTSERVICE_URL=https://$petstoreproductserviceFqdn" "WEBSITES_PORT=8080"
+
+az containerapp update --name "petstorepetservice" --resource-group "$tempResourceGroup" --set-env-vars "WEBSITES_PORT=8080"
+
+az containerapp update --name "petstoreproductservice" --resource-group "$tempResourceGroup" --set-env-vars "WEBSITES_PORT=8080"
+
+az containerapp update --name petstoreapp --resource-group "$tempResourceGroup" --scale-rule-name "petstoreapp-http-rule" --scale-rule-type "http" --scale-rule-metadata "concurrentRequests=3" --min-replicas 1 --max-replicas 3
+
+az containerapp update --name petstoreorderservice --resource-group "$tempResourceGroup" --scale-rule-name "petstoreorderservice-http-rule" --scale-rule-type "http" --scale-rule-metadata "concurrentRequests=3" --min-replicas 1 --max-replicas 3
+
+az containerapp update --name petstorepetservice --resource-group "$tempResourceGroup" --scale-rule-name "petstorepetservice-http-rule" --scale-rule-type "http" --scale-rule-metadata "concurrentRequests=3" --min-replicas 1 --max-replicas 3
+
+az containerapp update --name petstoreproductservice --resource-group "$tempResourceGroup" --scale-rule-name "petstoreproductservice-http-rule" --scale-rule-type "http" --scale-rule-metadata "concurrentRequests=3" --min-replicas 1 --max-replicas 3
+
+az containerapp update --name petstoreapp --resource-group "$tempResourceGroup" --revision-suffix v1
+
+az containerapp revision set-mode --name petstoreapp --resource-group "$tempResourceGroup" --mode multiple
+
+az acr build --image petstoreapp:v2 --registry "$acrName" --file petstoreapp/Dockerfile petstoreapp/
+
+az containerapp update --name petstoreapp --resource-group "$tempResourceGroup" --image "$acrName.azurecr.io/petstoreapp:v2" --revision-suffix v2
+
+az containerapp ingress traffic set --name petstoreapp --resource-group "$tempResourceGroup" --revision-weight petstoreapp--v1=50 petstoreapp--v2=50
+
+az containerapp ingress traffic set --name petstoreapp --resource-group "$tempResourceGroup" --revision-weight petstoreapp--v1=0 petstoreapp--v2=100
