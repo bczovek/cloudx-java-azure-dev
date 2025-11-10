@@ -1,0 +1,37 @@
+az login
+
+location="westeurope"
+
+az group create --name "AzureFunctionsQuickstart-rg" --location "$location"
+
+storageName="functionsstorage$RANDOM"
+
+az storage account create --name "$storageName" --location "$location" --resource-group "AzureFunctionsQuickstart-rg" --sku "Standard_LRS" --allow-blob-public-access false
+
+output=$(az identity create --name "func-host-storage-user" --resource-group "AzureFunctionsQuickstart-rg" --location "$location" --query "{userId:id, principalId: principalId, clientId: clientId}" -o json)
+
+userId=$(echo $output | jq -r '.userId')
+principalId=$(echo $output | jq -r '.principalId')
+clientId=$(echo $output | jq -r '.clientId')
+
+storageId=$(az storage account show --resource-group "AzureFunctionsQuickstart-rg" --name "$storageName" --query 'id' -o tsv)
+az role assignment create --assignee-object-id $principalId --assignee-principal-type ServicePrincipal --role "Storage Blob Data Owner" --scope subscriptions/c08a7cd3-fdfa-4a3d-a58d-a32c2c4fa2b4/resourceGroups/AzureFunctionsQuickstart-rg/providers/Microsoft.Storage/storageAccounts/functionsstorage20994
+
+appName="orderitemreserver-20251105150129631"
+
+az functionapp create --resource-group "AzureFunctionsQuickstart-rg" --name "$appName" --consumption-plan-location "$location" --runtime java --runtime-version 17.0 --storage-account "$storageName" --assign-identity "$userId" --functions-version 4
+
+az functionapp config appsettings set --name "$appName" --resource-group "AzureFunctionsQuickstart-rg" --settings AzureWebJobsStorage__accountName="$storageName" AzureWebJobsStorage__credential=managedidentity AzureWebJobsStorage__clientId=$clientId
+
+appInsights=$(az monitor app-insights component show --resource-group "AzureFunctionsQuickstart-rg" --app "$appName" --query "id" --output tsv)
+principalId=$(az identity show --name "func-host-storage-user" --resource-group "AzureFunctionsQuickstart-rg" --query principalId -o tsv)
+az role assignment create --role "Monitoring Metrics Publisher" --assignee $principalId --scope subscriptions/c08a7cd3-fdfa-4a3d-a58d-a32c2c4fa2b4/resourceGroups/AzureFunctionsQuickstart-rg/providers/microsoft.insights/components/orderitemreserver-20251105150129631
+
+clientId=$(az identity show --name func-host-storage-user --resource-group AzureFunctionsQuickstart-rg --query 'clientId' -o tsv)
+az functionapp config appsettings set --name "$appName" --resource-group "AzureFunctionsQuickstart-rg" --settings AzureWebJobsStorage__accountName="$storageName" AzureWebJobsStorage__credential=managedidentity AzureWebJobsStorage__clientId=$clientId APPLICATIONINSIGHTS_AUTHENTICATION_STRING="ClientId=$clientId;Authorization=AAD"
+
+az functionapp config appsettings delete --name "$appName" --resource-group "AzureFunctionsQuickstart-rg" --setting-names AzureWebJobsStorage
+
+mvn clean package azure-functions:deploy
+
+az functionapp show --name "$appName" --resource-group AzureFunctionsQuickstart-rg --query "{userAssignedIdentityResourceId: properties.functionAppConfig.deployment.storage.authentication.userAssignedIdentityResourceId, containerUrl: properties.functionAppConfig.deployment.storage.value}"

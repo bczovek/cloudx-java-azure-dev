@@ -8,6 +8,8 @@ petstore:
   service:
     product:
       url: ${PETSTOREPRODUCTSERVICE_URL:http://localhost:8082}
+    orderitemreserver:
+      url: ${ORDERITEMRESERVER_URL}
 
 springdoc:
   api-docs:

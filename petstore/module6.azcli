@@ -1,0 +1,50 @@
+az login
+
+tempResourceGroup1="temporary_rg"
+tempRg1Location="westeurope"
+
+az group create --name "$tempResourceGroup1" --location "$tempRg1Location"
+
+acrName="petstoreacr9084"
+
+az acr login --name "$acrName"
+
+az acr build --image petstoreapp:latest --registry "$acrName" --file petstoreapp/Dockerfile petstoreapp/
+az acr build --image petstoreorderservice:latest --registry "$acrName" --file petstoreorderservice/Dockerfile petstoreorderservice/
+az acr build --image petstorepetservice:latest --registry "$acrName" --file petstorepetservice/Dockerfile petstorepetservice/
+az acr build --image petstoreproductservice:latest --registry "$acrName" --file petstoreproductservice/Dockerfile petstoreproductservice/
+az acr build --image orderitemreserver:latest --registry "$acrName" --file orderitemreserver/Dockerfile orderitemreserver/
+
+az appservice plan create --name petstoreappPlan1 --resource-group "$tempResourceGroup1" --is-linux --location "$tempRg1Location" --sku P1V2
+
+az webapp create --name petstoreapp --plan petstoreappPlan1 --resource-group "$tempResourceGroup1" --deployment-container-image-name "$acrName.azurecr.io/petstoreapp:latest" 
+
+orderServiceName="petstoreorderservice$RANDOM"
+petServiceName="petstorepetservice$RANDOM"
+productServiceName="petstoreproductservice$RANDOM"
+
+az webapp create --name "$orderServiceName" --plan petstoreappPlan1 --resource-group "$tempResourceGroup1" --deployment-container-image-name "$acrName.azurecr.io/petstoreorderservice:latest"
+az webapp create --name "$petServiceName" --plan petstoreappPlan1 --resource-group "$tempResourceGroup1" --deployment-container-image-name "$acrName.azurecr.io/petstorepetservice:latest"
+az webapp create --name "$productServiceName" --plan petstoreappPlan1 --resource-group "$tempResourceGroup1" --deployment-container-image-name "$acrName.azurecr.io/petstoreproductservice:latest"
+
+storageName="petstorestorage$RANDOM"
+
+az storage account create --name "$storageName" --location "$location" --resource-group "$tempResourceGroup1" --sku "Standard_LRS" --allow-blob-public-access false
+
+appName="orderitemreserver-20251110162011191"
+
+az functionapp create --resource-group "$tempResourceGroup1" --name "$appName" --consumption-plan-location "$location" --runtime java --runtime-version 17.0 --plan petstoreappPlan1 --storage-account "$storageName" --image "$acrName.azurecr.io/orderitemreserver:latest" --functions-version 4
+
+az webapp config appsettings set --name petstoreapp --resource-group "$tempResourceGroup1" --settings PETSTOREPETSERVICE_URL="https://$petServiceName.azurewebsites.net" PETSTOREPRODUCTSERVICE_URL="https://$productServiceName.azurewebsites.net" PETSTOREORDERSERVICE_URL=https://$orderServiceName.azurewebsites.net WEBSITES_PORT=8080
+
+az webapp config appsettings set --name "$orderServiceName" --resource-group "$tempResourceGroup1" --settings PETSTOREPRODUCTSERVICE_URL="https://$productServiceName.azurewebsites.net" WEBSITES_PORT=8080 ORDERITEMRESERVER_URL="https://$appName.azurewebsites.net/api/reserveOrder"
+
+az webapp config appsettings set --name "$petServiceName" --resource-group "$tempResourceGroup1" --settings WEBSITES_PORT=8080
+
+az webapp config appsettings set --name "$productServiceName" --resource-group "$tempResourceGroup1" --settings WEBSITES_PORT=8080
+
+storageAccountConnString=$(az storage account show-connection-string --name "$storageName" --resource-group "$tempResourceGroup1" -o tsv)
+
+az storage container create --name "orders" --connection-string "$storageAccountConnString"
+
+az functionapp config appsettings set --name "$appName" --resource-group "$tempResourceGroup1" --settings BLOB_STORAGE_CONN_STRING="$storageAccountConnString"
