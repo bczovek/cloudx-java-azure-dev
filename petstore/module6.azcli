@@ -31,7 +31,7 @@ storageName="petstorestorage$RANDOM"
 
 az storage account create --name "$storageName" --location "$location" --resource-group "$tempResourceGroup1" --sku "Standard_LRS" --allow-blob-public-access false
 
-appName="orderitemreserver-20251110162011191"
+appName="orderitemreserver-20251110162011192"
 
 az functionapp create --resource-group "$tempResourceGroup1" --name "$appName" --consumption-plan-location "$location" --runtime java --runtime-version 17.0 --plan petstoreappPlan1 --storage-account "$storageName" --image "$acrName.azurecr.io/orderitemreserver:latest" --functions-version 4
 

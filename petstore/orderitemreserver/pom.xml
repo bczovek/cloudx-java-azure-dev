@@ -18,7 +18,7 @@
 		<spring-cloud-azure.version>6.0.0</spring-cloud-azure.version>
 		<azure.functions.maven.plugin.version>1.24.0</azure.functions.maven.plugin.version>
         <azure.functions.java.library.version>2.2.0</azure.functions.java.library.version>
-        <functionAppName>orderitemreserver-20251110162011191</functionAppName>
+        <functionAppName>orderitemreserver-20251110162011192</functionAppName>
 		<lombok.version>1.18.36</lombok.version>
 		<start-class>com.chtrembl.petstore.function.orderitemreserver.OrderitemreserverApplication</start-class>
 	</properties>
