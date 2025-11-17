@@ -8,6 +8,9 @@ petstore:
   service:
     product:
       url: ${PETSTOREPRODUCTSERVICE_URL:http://localhost:8082}
+    order:
+      cosmosdb:
+        url: ${ORDERDATABASE_URL}
 
 springdoc:
   api-docs:
