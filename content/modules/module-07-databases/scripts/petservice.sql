@@ -108,3 +108,7 @@ values
     (29, 3), (29, 4),
     (30, 3), (30, 4),
     (31, 3), (31, 5);
+
+CREATE ROLE "petstore_user" WITH LOGIN PASSWORD 'petstore_password';
+GRANT ALL PRIVILEGES ON DATABASE petstorepetservice_db TO "petstore_user";
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO "petstore_user";

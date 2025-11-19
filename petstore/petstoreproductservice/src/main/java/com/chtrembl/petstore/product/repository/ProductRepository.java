@@ -6,9 +6,10 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 import com.chtrembl.petstore.product.model.Product;
+import com.chtrembl.petstore.product.model.Status;
 
 @Repository
 public interface ProductRepository extends JpaRepository<Product, Long> {
 
-    List<Product> findByStatusIn(List<Product.Status> status);
+    List<Product> findByStatusIn(List<Status> statuses);
 }

@@ -1,8 +1,7 @@
 package com.chtrembl.petstore.product.model;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
+import com.chtrembl.petstore.product.converter.StatusConverter;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.fasterxml.jackson.annotation.JsonValue;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.Convert;
@@ -59,37 +58,5 @@ public class Product {
     public Product name(String name) {
         this.name = name;
         return this;
-    }
-
-    public enum Status {
-        AVAILABLE("available"),
-        PENDING("pending"),
-        SOLD("sold");
-
-        private final String value;
-
-        Status(String value) {
-            this.value = value;
-        }
-
-        @JsonCreator
-        public static Status fromValue(String value) {
-            for (Status b : Status.values()) {
-                if (b.value.equals(value)) {
-                    return b;
-                }
-            }
-            throw new IllegalArgumentException("Unexpected value '" + value + "'");
-        }
-
-        @JsonValue
-        public String getValue() {
-            return value;
-        }
-
-        @Override
-        public String toString() {
-            return String.valueOf(value);
-        }
     }
 }

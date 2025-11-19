@@ -65,4 +65,6 @@ values (1, 1), (1, 2),
        (10, 1), (10, 2),
        (11, 1), (11, 2);
        
-select * from product p 
+CREATE ROLE "petstore_user" WITH LOGIN PASSWORD 'petstore_password';
+GRANT ALL PRIVILEGES ON DATABASE petstoreproductservice_db TO "petstore_user";
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO "petstore_user";

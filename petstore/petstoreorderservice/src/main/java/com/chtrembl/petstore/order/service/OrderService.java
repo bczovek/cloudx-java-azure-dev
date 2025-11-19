@@ -19,7 +19,6 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class OrderService {
 
-    private static final String ORDERS = "orders";
     private final OrderRepository orderRepository;
     private final ProductService productService;
 

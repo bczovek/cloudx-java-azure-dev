@@ -1,6 +1,7 @@
 package com.chtrembl.petstore.product.service;
 
 import com.chtrembl.petstore.product.model.Product;
+import com.chtrembl.petstore.product.model.Status;
 import com.chtrembl.petstore.product.repository.ProductRepository;
 
 import lombok.RequiredArgsConstructor;
@@ -20,8 +21,8 @@ public class ProductService {
     public List<Product> findProductsByStatus(List<String> status) {
         log.info("Finding products with status: {}", status);
 
-        List<Product.Status> statuses = status.stream()
-                .map(s -> Product.Status.fromValue(s))
+        List<Status> statuses = status.stream()
+                .map(s -> Status.fromValue(s))
                 .toList();
         return productRepository.findByStatusIn(statuses);
     }
