@@ -1,4 +1,6 @@
 spring:
+  main:
+    allow-bean-definition-overriding: true
   application:
     name: petstoreorderservice
 server:
@@ -11,6 +13,7 @@ petstore:
     order:
       cosmosdb:
         url: ${ORDERDATABASE_URL}
+        name: ${ORDERDATABASE_NAME}
 
 springdoc:
   api-docs:

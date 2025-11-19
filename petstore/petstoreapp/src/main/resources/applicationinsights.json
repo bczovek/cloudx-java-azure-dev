@@ -6,10 +6,8 @@
   "sampling": {
     "percentage": 100
   },
-  "jmxMetrics": [
-  ],
-  "customDimensions": {
-  },
+  "jmxMetrics": [],
+  "customDimensions": {},
   "instrumentation": {
     "logging": {
       "level": "INFO"

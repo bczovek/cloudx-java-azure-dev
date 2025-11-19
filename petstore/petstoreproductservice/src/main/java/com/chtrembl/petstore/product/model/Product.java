@@ -3,6 +3,16 @@ package com.chtrembl.petstore.product.model;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonValue;
+
+import jakarta.persistence.Entity;
+import jakarta.persistence.Convert;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.JoinTable;
+import jakarta.persistence.ManyToMany;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import lombok.AllArgsConstructor;
@@ -17,10 +27,16 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
+@Entity
+@Table(name = "product")
 public class Product {
+    @Id
+    @GeneratedValue
     private Long id;
 
     @Valid
+    @ManyToOne
+    @JoinColumn(name = "category_id")
     private Category category;
 
     @NotNull
@@ -32,8 +48,12 @@ public class Product {
 
     @Valid
     @Builder.Default
+    @ManyToMany
+    @JoinTable(name = "product_tag", joinColumns = @JoinColumn(name = "product_id"), 
+            inverseJoinColumns = @JoinColumn(name = "tag_id"))
     private List<Tag> tags = new ArrayList<>();
 
+    @Convert(converter = StatusConverter.class)
     private Status status;
 
     public Product name(String name) {

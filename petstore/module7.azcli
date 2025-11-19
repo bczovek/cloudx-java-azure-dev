@@ -1,0 +1,78 @@
+az login
+
+tempResourceGroup1="temporary_rg1"
+tempRg1Location="northeurope"
+
+az group create --name $tempResourceGroup1 --location "$tempRg1Location"
+
+cosmosDbAccountName="cosmosdb$RANDOM"
+
+az cosmosdb create --name "$cosmosDbAccountName" --resource-group "$tempResourceGroup1"
+
+cosmosDatabaseName="petstoreorderservice"
+
+az cosmosdb sql database create --account-name "$cosmosDbAccountName" --resource-group "$tempResourceGroup1" --name "$cosmosDatabaseName"
+
+az cosmosdb sql container create --account-name "$cosmosDbAccountName" --resource-group "$tempResourceGroup1" --database-name "$cosmosDatabaseName" --name "orders" --partition-key-path "/id"
+
+acrName="petstoreacr9084"
+
+az acr login --name "$acrName"
+
+az acr build --image petstoreorderservice:latest --registry "$acrName" --file petstoreorderservice/Dockerfile petstoreorderservice/
+
+az acr build --image petstoreproductservice:v3 --registry "$acrName" --file petstoreproductservice/Dockerfile petstoreproductservice/
+
+az appservice plan create --name petstoreappPlan --resource-group "$tempResourceGroup1" --is-linux --location "$tempRg1Location" --sku P1V2
+
+az webapp create --name petstoreapp1 --plan petstoreappPlan --resource-group "$tempResourceGroup1" --deployment-container-image-name "$acrName.azurecr.io/petstoreapp:latest" 
+
+orderServiceName="petstoreorderservice$RANDOM"
+petServiceName="petstorepetservice$RANDOM"
+productServiceName="petstoreproductservice$RANDOM"
+
+az webapp create --name "$orderServiceName" --plan petstoreappPlan --resource-group "$tempResourceGroup1" --deployment-container-image-name "$acrName.azurecr.io/petstoreorderservice:latest"
+az webapp create --name "$petServiceName" --plan petstoreappPlan --resource-group "$tempResourceGroup1" --deployment-container-image-name "$acrName.azurecr.io/petstorepetservice:latest"
+az webapp create --name "$productServiceName" --plan petstoreappPlan --resource-group "$tempResourceGroup1" --deployment-container-image-name "$acrName.azurecr.io/petstoreproductservice:latest"
+
+az webapp config appsettings set --name petstoreapp1 --resource-group "$tempResourceGroup1" --settings PETSTOREPETSERVICE_URL="https://$petServiceName.azurewebsites.net" PETSTOREPRODUCTSERVICE_URL="https://$productServiceName.azurewebsites.net" PETSTOREORDERSERVICE_URL=https://$orderServiceName.azurewebsites.net WEBSITES_PORT=8080
+
+az webapp identity assign --name "$orderServiceName" --resource-group "$tempResourceGroup1"
+
+principalId=$(az webapp identity show --name "$orderServiceName" --resource-group "$tempResourceGroup1" --query principalId --output tsv)
+
+subscriptionId=$(az account show --query id --output tsv)
+
+cosmosScope="/subscriptions/$subscriptionId/resourceGroups/$tempResourceGroup1/providers/Microsoft.DocumentDB/databaseAccounts/$cosmosDbAccountName"
+
+az cosmosdb sql role assignment create --account-name "$cosmosDbAccountName" --principal-id "$principalId" --resource-group "$tempResourceGroup1" --scope "$cosmosScope" --role-definition-id 00000000-0000-0000-0000-000000000002
+
+cosmosDbEndpoint=$(az cosmosdb show --name $cosmosDbAccountName --resource-group $tempResourceGroup1 --query documentEndpoint --output tsv)
+
+az webapp config appsettings set --name "$orderServiceName" --resource-group "$tempResourceGroup1" --settings PETSTOREPRODUCTSERVICE_URL="https://$productServiceName.azurewebsites.net" ORDERDATABASE_URL="$cosmosDbEndpoint" ORDERDATABASE_NAME="$cosmosDatabaseName" WEBSITES_PORT=8080
+
+petstoreDbName="petstoredb3143"
+
+az postgres flexible-server create --resource-group "$tempResourceGroup1" --name "$petstoreDbName" --location "$tempRg1Location" --admin-user bczovek --admin-password bczovek123 --sku-name Standard_D4ds_v4 --public-access 0.0.0.0
+ 
+az postgres flexible-server db create \
+  --resource-group "$tempResourceGroup1" \
+  --server-name "$petstoreDbName" \
+  --database-name "petstoreproductservice_db"
+
+az postgres flexible-server firewall-rule create \
+  --resource-group "$tempResourceGroup1" \
+  --name "$petstoreDbName" \
+  --rule-name AllowMyPC \
+  --start-ip-address <myIp> \
+  --end-ip-address <myIp>
+
+postgresUrl="postgresql://$(az postgres flexible-server show --resource-group "$tempResourceGroup1" --name "$petstoreDbName" --query "fullyQualifiedDomainName" -o tsv):5432/petstoreproductservice_db?sslmode=require"
+
+echo "$postgresUrl"
+
+az webapp config container set --name petstoreproductservice24418 --resource-group "$tempResourceGroup1" --container-image-name "$acrName.azurecr.io/petstoreproductservice:v3"
+
+az webapp config appsettings set --name petstoreproductservice24418 --resource-group "$tempResourceGroup1" --settings WEBSITES_PORT=8080 POSTGRES_USERNAME=petstore_user POSTGRES_PASSWORD=petstore_password POSTGRES_URL="$postgresUrl"
+
+az webapp config appsettings set --name "$petServiceName" --resource-group "$tempResourceGroup1" --settings WEBSITES_PORT=8080
