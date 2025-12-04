@@ -46,6 +46,16 @@
 			<artifactId>spring-boot-starter-test</artifactId>
 			<scope>test</scope>
 		</dependency>
+		<dependency>
+			<groupId>io.github.resilience4j</groupId>
+			<artifactId>resilience4j-retry</artifactId>
+			<version>2.3.0</version>
+		</dependency>
+		<dependency>
+			<groupId>io.github.resilience4j</groupId>
+			<artifactId>resilience4j-spring-boot3</artifactId>
+			<version>2.3.0</version>
+		</dependency>
 	</dependencies>
 	<dependencyManagement>
 		<dependencies>
@@ -70,7 +80,7 @@
                     <appName>${functionAppName}</appName>
                     <resourceGroup></resourceGroup>
                     <appServicePlanName>petstoreappPlan</appServicePlanName>
-                    <region>westeurope</region>
+                    <region>northeurope</region>
                     <pricingTier>EP1</pricingTier>
                     <runtime>
                         <os>docker</os>

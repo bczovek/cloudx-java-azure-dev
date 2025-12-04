@@ -3,5 +3,5 @@ spring:
     name: orderitemreserver
 
 blobStorage:
-  connString: ${BLOB_STORAGE_CONN_STRING}
   containerName: ${BLOB_CONTAINER_NAME:orders}
+  url: ${BLOB_STORAGE_URL}

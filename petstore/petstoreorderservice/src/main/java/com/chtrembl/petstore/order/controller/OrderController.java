@@ -2,7 +2,7 @@ package com.chtrembl.petstore.order.controller;
 
 import com.chtrembl.petstore.order.model.Order;
 import com.chtrembl.petstore.order.model.Product;
-import com.chtrembl.petstore.order.service.OrderItemReserverService;
+import com.chtrembl.petstore.order.service.OrderServiceBusService;
 import com.chtrembl.petstore.order.service.OrderService;
 import com.chtrembl.petstore.order.service.ProductService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -38,7 +38,7 @@ public class OrderController {
 
     private final OrderService orderService;
     private final ProductService productService;
-    private final OrderItemReserverService orderItemReserverService;
+    private final OrderServiceBusService orderServiceBusService;
 
     @Operation(
             summary = "Place an order for a product",
@@ -65,7 +65,7 @@ public class OrderController {
         List<Product> availableProducts = productService.getAvailableProducts();
         orderService.enrichOrderWithProductDetails(updatedOrder, availableProducts);
         
-        orderItemReserverService.sendOrderToReserver(updatedOrder);
+        orderServiceBusService.sendOrder(updatedOrder);
 
         log.info("Successfully processed order: {}", updatedOrder.getId());
 

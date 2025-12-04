@@ -8,8 +8,9 @@ petstore:
   service:
     product:
       url: ${PETSTOREPRODUCTSERVICE_URL:http://localhost:8082}
-    orderitemreserver:
-      url: ${ORDERITEMRESERVER_URL}
+    orderservicebus:
+      fqNamespace: ${ORDERSERVICEBUS_FQ_NAMESPACE}
+      queueName: ${ORDERSERVICEBUS_QUEUE_NAME:orders}
 
 springdoc:
   api-docs:
