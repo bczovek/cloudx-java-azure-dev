@@ -3,11 +3,10 @@ package com.chtrembl.petstore.order.service;
 import com.chtrembl.petstore.order.exception.OrderNotFoundException;
 import com.chtrembl.petstore.order.model.Order;
 import com.chtrembl.petstore.order.model.Product;
+import com.chtrembl.petstore.order.repository.OrderRepository;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.cache.Cache;
-import org.springframework.cache.CacheManager;
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -21,10 +20,9 @@ import java.util.stream.Collectors;
 public class OrderService {
 
     private static final String ORDERS = "orders";
-    private final CacheManager cacheManager;
+    private final OrderRepository orderRepository;
     private final ProductService productService;
 
-    @Cacheable(ORDERS)
     public Order createOrder(String orderId) {
         log.info("Creating new order with id: {} and caching it", orderId);
         return Order.builder()
@@ -50,17 +48,10 @@ public class OrderService {
             throw new IllegalArgumentException("Order ID cannot be null or empty");
         }
 
-        // Try to get from cache
-        Cache cache = cacheManager.getCache(ORDERS);
-        if (cache != null) {
-            Cache.ValueWrapper wrapper = cache.get(orderId);
-            if (wrapper != null) {
-                Order cachedOrder = (Order) wrapper.get();
-                if (cachedOrder != null) {
-                    log.info("Found existing order: {}", orderId);
-                    return cachedOrder;
-                }
-            }
+        Optional<Order> cachedOrder = orderRepository.findById(orderId);
+        if (cachedOrder.isPresent()) {
+            log.info("Found existing order: {}", orderId);
+            return cachedOrder.get();
         }
 
         // Order not found - throw exception instead of creating new one
@@ -75,25 +66,16 @@ public class OrderService {
     public Order getOrCreateOrder(String orderId) {
         log.info("Getting or creating order: {}", orderId);
 
-        // Try to get from cache first
-        Cache cache = cacheManager.getCache(ORDERS);
-        if (cache != null) {
-            Cache.ValueWrapper wrapper = cache.get(orderId);
-            if (wrapper != null) {
-                Order cachedOrder = (Order) wrapper.get();
-                if (cachedOrder != null) {
-                    log.info("Found existing order for update: {}", orderId);
-                    return cachedOrder;
-                }
-            }
+        Optional<Order> cachedOrder = orderRepository.findById(orderId);
+        if (cachedOrder.isPresent()) {
+            log.info("Found existing order for update: {}", orderId);
+            return cachedOrder.get();
         }
 
         // Create new order if not found
         log.info("Creating new order for update: {}", orderId);
         Order newOrder = createOrder(orderId);
-        if (cache != null) {
-            cache.put(orderId, newOrder);
-        }
+        orderRepository.save(newOrder);
 
         return newOrder;
     }
@@ -128,12 +110,8 @@ public class OrderService {
             cachedOrder.setComplete(isComplete != null ? isComplete : false);
             updateOrderProducts(cachedOrder, order.getProducts());
         }
-
-        // Explicitly update cache
-        Cache cache = cacheManager.getCache(ORDERS);
-        if (cache != null) {
-            cache.put(order.getId(), cachedOrder);
-        }
+        
+        orderRepository.save(cachedOrder);
 
         return cachedOrder;
     }
@@ -141,7 +119,7 @@ public class OrderService {
     /**
      * Validates that all products in the order exist in the available products list
      *
-     * @param orderProducts List of products from the order
+     * @param orderProducts     List of products from the order
      * @param availableProducts List of available products from Product Service
      * @throws IllegalArgumentException if any product is not found
      */

@@ -1,0 +1,596 @@
+az login
+
+tempResourceGroup="temporary_rg"
+tempRgLocation="northeurope"
+
+# Build and push images to ACR
+acrName="petstoreacr9084"
+
+az acr login --name "$acrName"
+
+az acr build \
+    --image petstoreapp:latest \
+    --registry "$acrName" \
+    --file petstoreapp/Dockerfile petstoreapp/
+az acr build \
+    --image petstoreorderservice:v3 \
+    --registry "$acrName" \
+    --file petstoreorderservice/Dockerfile petstoreorderservice/
+az acr build \
+    --image petstorepetservice:latest \
+    --registry "$acrName" \
+    --file petstorepetservice/Dockerfile petstorepetservice/
+az acr build \
+    --image petstoreproductservice:latest \
+    --registry "$acrName" \
+    --file petstoreproductservice/Dockerfile petstoreproductservice/
+az acr build \
+    --image orderitemreserver:latest \
+    --registry "$acrName" \
+    --file orderitemreserver/Dockerfile \
+    orderitemreserver/
+
+# Create Application Insights
+az monitor app-insights component create --app appinsights1 --location "$tempRgLocation" --resource-group "$tempResourceGroup"
+
+appInsightsConnString="$(az monitor app-insights component show --app appinsights1 --resource-group "$tempResourceGroup" --query connectionString -o tsv)"
+
+# Create SQL Database
+petstoreDbName="petstoredb$RANDOM"
+
+adminUser="petstoreDbAdmin"
+adminPassword="petstoreDbPassword"
+
+az postgres flexible-server create \
+    --resource-group "$tempResourceGroup" \
+    --name "$petstoreDbName" \
+    --location "$tempRgLocation" \
+    --admin-user "$adminUser" \
+    --admin-password "$adminPassword" \
+    --sku-name Standard_D4ds_v4 \
+    --public-access 0.0.0.0
+ 
+az postgres flexible-server db create \
+  --resource-group "$tempResourceGroup" \
+  --server-name "$petstoreDbName" \
+  --database-name "petstoreproductservice_db"
+
+az postgres flexible-server db create \
+  --resource-group "$tempResourceGroup" \
+  --server-name "$petstoreDbName" \
+  --database-name "petstorepetservice_db"
+
+# Grant access from my IP
+myIp=$(curl -s https://api.ipify.org)
+
+az postgres flexible-server firewall-rule create \
+  --resource-group "$tempResourceGroup" \
+  --name "$petstoreDbName" \
+  --rule-name AllowMyPC \
+  --start-ip-address "$myIp" \
+  --end-ip-address "$myIp"
+
+# Fill DB with data
+postgresUrl="$(az postgres flexible-server show \
+    --resource-group "$tempResourceGroup" \
+    --name "$petstoreDbName" \
+    --query "fullyQualifiedDomainName" \
+    -o tsv)"
+
+sudo -u postgres psql "host=$postgresUrl user=$adminUser dbname=petstoreproductservice_db password=$adminPassword sslmode=require" < ../content/modules/module-07-databases/scripts/productservice.sql
+
+sudo -u postgres psql "host=$postgresUrl user=$adminUser dbname=petstorepetservice_db password=$adminPassword sslmode=require" < ../content/modules/module-07-databases/scripts/petservice.sql
+
+# Create CosmosDB
+cosmosDbAccountName="cosmosdb$RANDOM"
+
+az cosmosdb create \
+    --name "$cosmosDbAccountName" \
+    --resource-group "$tempResourceGroup"
+
+cosmosDatabaseName="petstoreorderservice"
+
+az cosmosdb sql database create \
+    --account-name "$cosmosDbAccountName" \
+    --resource-group "$tempResourceGroup" \
+    --name "$cosmosDatabaseName"
+
+az cosmosdb sql container create \
+    --account-name "$cosmosDbAccountName" \
+    --resource-group "$tempResourceGroup" \
+    --database-name "$cosmosDatabaseName" \
+    --name "orders" \
+    --partition-key-path "/id"
+
+# Create Service Bus
+sbNamespace="petstoreNs$RANDOM"
+
+az servicebus namespace create \
+    --resource-group "$tempResourceGroup" \
+    --name "$sbNamespace" \
+    --location "$tempRgLocation" \
+    --sku Standard
+
+# Create service bus queue
+az servicebus queue create \
+    --resource-group "$tempResourceGroup" \
+    --namespace-name "$sbNamespace" \
+    --name orders \
+    --max-size 1024 \
+    --default-message-time-to-live P14D \
+    --lock-duration PT30S
+
+serviceBusId=$(az servicebus namespace show \
+  --name "$sbNamespace" \
+  --resource-group "$tempResourceGroup" \
+  --query id -o tsv)
+
+# Create Storage account
+storageName="petstorestorage$RANDOM"
+
+az storage account create \
+  --name "$storageName" \
+  --location "$tempRgLocation" \
+  --resource-group "$tempResourceGroup" \
+  --sku "Standard_LRS" \
+  --allow-blob-public-access false
+
+# Create Blob container
+storageAccountConnString=$(az storage account show-connection-string \
+    --name "$storageName" \
+    --resource-group "$tempResourceGroup" \
+    -o tsv)
+
+az storage container create \
+  --name "orders" \
+  --connection-string "$storageAccountConnString"
+
+# Create Logic App
+logicAppName="petstorelogicapp$RANDOM"
+
+az logicapp create --name "$logicAppName" \
+    --resource-group "$tempResourceGroup" \
+    --storage-account "$storageName"
+
+az webapp identity assign \
+    --name "$logicAppName" \
+    --resource-group "$tempResourceGroup"
+
+logicAppPrincipalId=$(az webapp identity show \
+    --name "$logicAppName" \
+    --resource-group "$tempResourceGroup" \
+    --query principalId \
+    --output tsv)
+
+az role assignment create \
+  --assignee "$logicAppPrincipalId" \
+  --role "Azure Service Bus Data Owner" \
+  --scope "$serviceBusId"
+
+# Create Key Vault
+vaultName="petstoreKeyVault$RANDOM"
+
+az keyvault create \
+    --name "$vaultName" \
+    --resource-group "$tempResourceGroup"
+
+# Grant myself access to Key Vault
+vaultId=$(az keyvault show \
+    --name "$vaultName" \
+    --query id \
+    --output tsv)
+
+userName=$(az account show --query user.name -o tsv)
+
+az role assignment create \
+    --role "Key Vault Secrets Officer" \
+    --assignee "$userName" \
+    --scope "$vaultId"
+
+# Set secrets in Key Vault
+productDbConnUrl="postgresql://$postgresUrl:5432/petstoreproductservice_db?sslmode=require"
+
+petDbConnUrl="postgresql://$postgresUrl:5432/petstorepetservice_db?sslmode=require"
+
+az keyvault secret set \
+    --vault-name "$vaultName" \
+    --name "petstorePetServiceDbUrl" \
+    --value "$petDbConnUrl"
+
+az keyvault secret set \
+    --vault-name "$vaultName" \
+    --name "petstoreProductServiceDbUrl" \
+    --value "$productDbConnUrl"
+
+az keyvault secret set \
+    --vault-name "$vaultName" \
+    --name "petstoreDbUsername" \
+    --value "petstore_user"
+
+az keyvault secret set \
+    --vault-name "$vaultName" \
+    --name "petstoreDbPassword" \
+    --value "petstore_password"
+
+az keyvault secret set \
+    --vault-name "$vaultName" \
+    --name "aiConnString" \
+    --value "$appInsightsConnString"
+
+az keyvault secret set \
+    --vault-name "$vaultName" \
+    --name "azureClientSecret" \
+    --value "<secret>"
+
+# Create user-managed identity with access to Key Vault and ACR for PetStoreApp, Product Service and Pet Service
+identityName="petstoreIdentity$RANDOM"
+
+az identity create \
+  --name "$identityName" \
+  --resource-group "$tempResourceGroup" \
+  --location "$tempRgLocation"
+
+identityId=$(az identity show \
+  --name "$identityName" \
+  --resource-group "$tempResourceGroup" \
+  --query id \
+  --output tsv)
+
+principalId=$(az identity show \
+  --name "$identityName" \
+  --resource-group "$tempResourceGroup" \
+  --query principalId \
+  --output tsv)
+
+az role assignment create \
+  --assignee $principalId \
+  --role "Key Vault Secrets User" \
+  --scope "$vaultId"
+
+acrScope=$(az acr show --name "$acrName" --query id --output tsv)
+
+az role assignment create \
+  --assignee $principalId \
+  --role AcrPull \
+  --scope "$acrScope"
+
+az role assignment create \
+  --assignee $principalId \
+  --role AcrPush \
+  --scope "$acrScope"
+
+# Create App service plan
+az appservice plan create \
+    --name petstoreappPlan \
+    --resource-group "$tempResourceGroup" \
+    --is-linux \
+    --location "$tempRgLocation" \
+    --sku P1V2
+
+# Create services
+orderServiceName="petstoreorderservice$RANDOM"
+petServiceName="petstorepetservice$RANDOM"
+productServiceName="petstoreproductservice$RANDOM"
+
+aiConnStringUrlSecret=$(az keyvault secret show --vault-name "$vaultName" --name "aiConnString" --query "id" --output tsv)
+azureClientSecretUrlSecret=$(az keyvault secret show --vault-name "$vaultName" --name "azureClientSecret" --query "id" --output tsv)
+
+# Create Pet Store App
+az webapp create \
+    --name petstoreapp1 \
+    --plan petstoreappPlan \
+    --resource-group "$tempResourceGroup" \
+    --container-image-name "$acrName.azurecr.io/petstoreapp:latest" \
+    --acr-use-identity \
+    --assign-identity "$identityId" \
+    --acr-identity "$identityId"
+
+az webapp config appsettings set \
+    --name petstoreapp1 \
+    --resource-group "$tempResourceGroup" \
+    --settings \
+    PETSTOREPETSERVICE_URL="https://$petServiceName.azurewebsites.net" \
+    PETSTOREPRODUCTSERVICE_URL="https://$productServiceName.azurewebsites.net" \
+    PETSTOREORDERSERVICE_URL=https://$orderServiceName.azurewebsites.net \
+    APPLICATIONINSIGHTS_CONNECTION_STRING="@Microsoft.KeyVault(SecretUri=$aiConnStringUrlSecret)" \
+    APPLICATIONINSIGHTS_ENABLED=true \
+    PETSTORE_SECURITY_ENABLED=true \
+    WEBSITES_PORT=8080 \
+    AZURE_TENANT_DOMAIN=bczovekpetstore \
+    AZURE_CLIENT_ID=2dcf7299-67b0-4738-9423-bc134f4d9362 \
+    AZURE_CLIENT_SECRET="@Microsoft.KeyVault(SecretUri=$azureClientSecretUrlSecret)"
+
+# Create Order Service
+az webapp create \
+    --name "$orderServiceName" \
+    --plan petstoreappPlan \
+    --resource-group "$tempResourceGroup" \
+    --container-image-name "$acrName.azurecr.io/petstoreorderservice:latest" \
+    --acr-use-identity \
+    --assign-identity
+
+orderServicePrincipalId=$(az webapp identity show \
+    --name "$orderServiceName" \
+    --resource-group "$tempResourceGroup" \
+    --query principalId \
+    --output tsv)
+
+az role assignment create \
+  --assignee $orderServicePrincipalId \
+  --role "Azure Service Bus Data Owner" \
+  --scope $serviceBusId
+
+az role assignment create \
+  --assignee $orderServicePrincipalId \
+  --role "AcrPull" \
+  --scope $acrScope
+
+az role assignment create \
+  --assignee $orderServicePrincipalId \
+  --role "Key Vault Secrets User" \
+  --scope "$vaultId"
+
+subscriptionId=$(az account show \
+    --query id \
+    --output tsv)
+
+cosmosScope="/subscriptions/$subscriptionId/resourceGroups/$tempResourceGroup/providers/Microsoft.DocumentDB/databaseAccounts/$cosmosDbAccountName"
+
+az cosmosdb sql role definition create \
+  --account-name "$cosmosDbAccountName" \
+  --resource-group "$tempResourceGroup" \
+  --body '{
+    "RoleName": "CosmosDBReadWriteRole",
+    "Type": "CustomRole",
+    "AssignableScopes": ["/"],
+    "Permissions": [{
+      "DataActions": [
+        "Microsoft.DocumentDB/databaseAccounts/readMetadata",
+        "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/*",
+        "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/*"
+      ]
+    }]
+  }'
+
+roleDefId=$(az cosmosdb sql role definition list \
+  --account-name "$cosmosDbAccountName" \
+  --resource-group "$tempResourceGroup" \
+  --query "[?roleName=='CosmosDBReadWriteRole'].id" \
+  --output tsv)
+
+az cosmosdb sql role assignment create \
+    --account-name "$cosmosDbAccountName" \
+    --resource-group "$tempResourceGroup" \
+    --principal-id "$orderServicePrincipalId" \
+    --scope "$cosmosScope" \
+    --role-definition-id "$roleDefId"
+
+cosmosDbEndpoint=$(az cosmosdb show \
+    --name $cosmosDbAccountName \
+    --resource-group $tempResourceGroup \
+    --query documentEndpoint \
+    --output tsv)
+
+az webapp config appsettings set \
+    --name "$orderServiceName" \
+    --resource-group "$tempResourceGroup" \
+    --settings \
+    PETSTOREPRODUCTSERVICE_URL="https://$productServiceName.azurewebsites.net" \
+    ORDERDATABASE_URL="$cosmosDbEndpoint" \
+    ORDERDATABASE_NAME="$cosmosDatabaseName" \
+    ORDERSERVICEBUS_FQ_NAMESPACE="$sbNamespace.servicebus.windows.net" \
+    WEBSITES_PORT=8080
+
+# Create Pet Service
+az webapp create \
+    --name "$petServiceName" \
+    --plan petstoreappPlan \
+    --resource-group "$tempResourceGroup" \
+    --container-image-name "$acrName.azurecr.io/petstorepetservice:latest" \
+    --acr-use-identity \
+    --assign-identity "$identityId" \
+    --acr-identity "$identityId"
+
+# Create Product Service
+az webapp create \
+    --name "$productServiceName" \
+    --acr-use-identity \
+    --plan petstoreappPlan \
+    --resource-group "$tempResourceGroup" \
+    --container-image-name "$acrName.azurecr.io/petstoreproductservice:latest" \
+    --acr-use-identity \
+    --assign-identity "$identityId" \
+    --acr-identity "$identityId"
+
+# Create Order Item Reserver Function
+appName="orderitemreserver-20251110162011192"
+
+az functionapp create \
+    --plan petstoreappPlan \
+    --resource-group "$tempResourceGroup" \
+    --name "$appName" \
+    --storage-account "$storageName" \
+    --image "$acrName.azurecr.io/orderitemreserver:latest"
+
+storageUrl=$(az storage account show \
+  --name "$storageName" \
+  --resource-group "$tempResourceGroup" \
+  --query "primaryEndpoints.blob" \
+  --output tsv)
+
+az functionapp config appsettings set \
+    --name "$appName" \
+    --resource-group "$tempResourceGroup" \
+    --settings \
+    petstoreMQ__fullyQualifiedNamespace="$sbNamespace.servicebus.windows.net" \
+    BLOB_STORAGE_URL="$storageUrl"
+
+# Assign roles to Function App
+funcPrincipalId=$(az functionapp identity assign \
+  --name "$appName" \
+  --resource-group "$tempResourceGroup" \
+  --query principalId -o tsv)
+
+storageAccountId=$(az storage account show \
+  --name "$storageName" \
+  --resource-group "$tempResourceGroup" \
+  --query id -o tsv)
+
+az role assignment create \
+  --assignee $funcPrincipalId \
+  --role "Storage Blob Data Contributor" \
+  --scope $storageAccountId
+
+az role assignment create \
+  --assignee $funcPrincipalId \
+  --role "Azure Service Bus Data Owner" \
+  --scope $serviceBusId
+
+# Set keyVaultReferenceIdentity
+az webapp update \
+    --resource-group "$tempResourceGroup" \
+    --name "petstoreapp1" \
+    --set keyVaultReferenceIdentity="$identityId"
+
+az webapp update \
+    --resource-group "$tempResourceGroup" \
+    --name "$petServiceName" \
+    --set keyVaultReferenceIdentity="$identityId"
+
+az webapp update \
+    --resource-group "$tempResourceGroup" \
+    --name "$productServiceName" \
+    --set keyVaultReferenceIdentity="$identityId"
+
+# Set environment variables
+petstorePetServiceDbUrlSecret=$(az keyvault secret show --vault-name "$vaultName" --name "petstorePetServiceDbUrl" --query "id" --output tsv)
+petstoreProductServiceDbUrlSecret=$(az keyvault secret show --vault-name "$vaultName" --name "petstoreProductServiceDbUrl" --query "id" --output tsv)
+petstoreDbUsernameSecret=$(az keyvault secret show --vault-name "$vaultName" --name "petstoreDbUsername" --query "id" --output tsv)
+petstoreDbPasswordSecret=$(az keyvault secret show --vault-name "$vaultName" --name "petstoreDbPassword" --query "id" --output tsv)
+
+az webapp config appsettings set \
+    --name "$productServiceName" \
+    --resource-group "$tempResourceGroup" \
+    --settings WEBSITES_PORT=8080 \
+    POSTGRES_USERNAME="@Microsoft.KeyVault(SecretUri=$petstoreDbUsernameSecret)" \
+    POSTGRES_PASSWORD="@Microsoft.KeyVault(SecretUri=$petstoreDbPasswordSecret)" \
+    POSTGRES_URL="@Microsoft.KeyVault(SecretUri=$petstoreProductServiceDbUrlSecret)"
+
+az webapp config appsettings set \
+    --name "$petServiceName" \
+    --resource-group "$tempResourceGroup" \
+    --settings WEBSITES_PORT=8080 \
+    POSTGRES_USERNAME="@Microsoft.KeyVault(SecretUri=$petstoreDbUsernameSecret)" \
+    POSTGRES_PASSWORD="@Microsoft.KeyVault(SecretUri=$petstoreDbPasswordSecret)" \
+    POSTGRES_URL="@Microsoft.KeyVault(SecretUri=$petstorePetServiceDbUrlSecret)"
+
+# Setup staging slot
+az webapp deployment slot create \
+    --name petstoreapp1 \
+    --resource-group "$tempResourceGroup" \
+    --slot staging
+
+az webapp identity assign \
+  --resource-group "$tempResourceGroup" \
+  --name "petstoreapp1" \
+  --slot staging \
+  --identities "$identityId"
+
+clientId=$(az identity show \
+  --resource-group "$tempResourceGroup" \
+  --name "$identityName" \
+  --query clientId \
+  --output tsv)
+
+az webapp config set \
+  --resource-group "$tempResourceGroup" \
+  --name "petstoreapp1" \
+  --slot staging \
+  --generic-configurations "{\"acrUseManagedIdentityCreds\": true, \"acrUserManagedIdentityID\": \"$clientId\"}"
+
+az webapp update \
+    --resource-group "$tempResourceGroup" \
+    --name "petstoreapp1" \
+    --slot staging \
+    --set keyVaultReferenceIdentity="$identityId"
+
+az webapp config appsettings set \
+    --name petstoreapp1 \
+    --resource-group "$tempResourceGroup" \
+    --slot staging \
+    --settings \
+    PETSTOREPETSERVICE_URL="https://$petServiceName.azurewebsites.net" \
+    PETSTOREPRODUCTSERVICE_URL="https://$productServiceName.azurewebsites.net" \
+    PETSTOREORDERSERVICE_URL=https://$orderServiceName.azurewebsites.net \
+    APPLICATIONINSIGHTS_CONNECTION_STRING="@Microsoft.KeyVault(SecretUri=$aiConnStringUrlSecret)" \
+    APPLICATIONINSIGHTS_ENABLED=true \
+    PETSTORE_SECURITY_ENABLED=true \
+    WEBSITES_PORT=8080 \
+    AZURE_TENANT_DOMAIN=bczovekpetstore \
+    AZURE_CLIENT_ID=2dcf7299-67b0-4738-9423-bc134f4d9362 \
+    AZURE_CLIENT_SECRET="@Microsoft.KeyVault(SecretUri=$azureClientSecretUrlSecret)"
+
+# Setup CD
+cicdUrl=$(az webapp deployment container config \
+    --enable-cd true \
+    --name petstoreapp1 \
+    --resource-group "$tempResourceGroup" \
+    --query CI_CD_URL \
+    --slot staging \
+    --output tsv)
+
+az acr webhook create \
+    --name stagingSlotCD \
+    --registry "$acrName" \
+    --uri $cicdUrl \
+    --actions push \
+    --scope petstoreapp:latest
+
+# Setup autoscale
+az monitor autoscale create \
+    --resource-group "$tempResourceGroup" --resource petstoreappPlan \
+    --min-count 1 --max-count 3 --count 1 \
+    --resource-type Microsoft.Web/serverfarms
+
+az monitor autoscale rule create --resource-group "$tempResourceGroup" \
+    --autoscale-name petstoreappPlan \
+    --scale out 1 --condition "CpuPercentage > 70 avg 5m" \
+    --cooldown 5
+
+az monitor autoscale rule create --resource-group "$tempResourceGroup" \
+    --autoscale-name petstoreappPlan \
+    --scale in 1 --condition "CpuPercentage < 25 avg 5m" \
+    --cooldown 5
+
+# Restart services
+az webapp restart \
+    --name "$productServiceName" \
+    --resource-group "$tempResourceGroup"
+
+az webapp restart \
+    --name "$petServiceName" \
+    --resource-group "$tempResourceGroup"
+
+az webapp restart \
+    --name "$orderServiceName" \
+    --resource-group "$tempResourceGroup"
+
+az webapp restart \
+    --name "petstoreapp1" \
+    --resource-group "$tempResourceGroup"
+
+az acr build \
+    --image petstoreapp:latest \
+    --registry "$acrName" \
+    --file petstoreapp/Dockerfile petstoreapp/
+
+# Forcing failure by revoking access of function app to blob storage
+az role assignment delete \
+  --assignee $funcPrincipalId \
+  --role "Storage Blob Data Contributor" \
+  --scope $storageAccountId
+
+az role assignment create \
+  --assignee $funcPrincipalId \
+  --role "Storage Blob Data Contributor" \
+  --scope $storageAccountId

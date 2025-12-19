@@ -24,7 +24,7 @@ public class PetStoreFacadeService {
         return petManagementService.getPetsByCategory(category);
     }
 
-    public Collection<Product> getProducts(String category, List<Tag> tags) throws Exception {
+    public Collection<Product> getProducts(String category, List<Tag> tags) {
         return productManagementService.getProductsByCategory(category, tags);
     }
 

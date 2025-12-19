@@ -1,8 +1,16 @@
 package com.chtrembl.petstore.pet.model;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
+import com.chtrembl.petstore.pet.converter.StatusConverter;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.fasterxml.jackson.annotation.JsonValue;
+import jakarta.persistence.Convert;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.JoinTable;
+import jakarta.persistence.ManyToMany;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import lombok.AllArgsConstructor;
@@ -17,10 +25,16 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
+@Entity
+@Table(name = "pet")
 public class Pet {
+    @Id
+    @GeneratedValue
     private Long id;
 
     @Valid
+    @ManyToOne
+    @JoinColumn(name = "category_id")
     private Category category;
 
     @NotNull
@@ -32,44 +46,16 @@ public class Pet {
 
     @Valid
     @Builder.Default
+    @ManyToMany
+    @JoinTable(name = "pet_tag", joinColumns = @JoinColumn(name = "pet_id"), 
+            inverseJoinColumns = @JoinColumn(name = "tag_id"))
     private List<Tag> tags = new ArrayList<>();
 
+    @Convert(converter = StatusConverter.class)
     private Status status;
 
     public Pet name(String name) {
         this.name = name;
         return this;
-    }
-
-    public enum Status {
-        AVAILABLE("available"),
-        PENDING("pending"),
-        SOLD("sold");
-
-        private final String value;
-
-        Status(String value) {
-            this.value = value;
-        }
-
-        @JsonCreator
-        public static Status fromValue(String value) {
-            for (Status b : Status.values()) {
-                if (b.value.equals(value)) {
-                    return b;
-                }
-            }
-            throw new IllegalArgumentException("Unexpected value '" + value + "'");
-        }
-
-        @JsonValue
-        public String getValue() {
-            return value;
-        }
-
-        @Override
-        public String toString() {
-            return String.valueOf(value);
-        }
     }
 }

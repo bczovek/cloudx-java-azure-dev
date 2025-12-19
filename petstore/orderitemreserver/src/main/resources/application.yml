@@ -1,0 +1,7 @@
+spring:
+  application:
+    name: orderitemreserver
+
+blobStorage:
+  containerName: ${BLOB_CONTAINER_NAME:orders}
+  url: ${BLOB_STORAGE_URL}
